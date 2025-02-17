@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify,send_file
 import psycopg2
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, verify_jwt_in_request
@@ -7,9 +7,11 @@ from flask_cors import CORS
 from psycopg2.extras import RealDictCursor
 from datetime import timedelta
 import json
+import qrcode
+import io
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, origins="http://localhost:3000", supports_credentials=True)   
 
 # Configure JWT Secret Key
 app.config['JWT_SECRET_KEY'] = 'acdfwrbmnhjfdbgdvmjgbdkdjn'  # Change this to a secure key
@@ -243,6 +245,69 @@ def get_events():
         return jsonify(events)
     except Exception as e:
         return jsonify({"error": str(e)}), 500 #yss
+
+@app.route('/update-payment-status', methods=['POST'])
+@jwt_required()
+def update_payment_status():
+    student_regno = get_jwt_identity()  # Get user ID from JWT
+    data = request.get_json()
+    event_id = data.get("event_id")
+
+    if not event_id:
+        return jsonify({"error": "Missing event_id"}), 400
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            "UPDATE registrations SET paid_status = TRUE WHERE student_regno = %s AND event_id = %s",
+            (student_regno, event_id),
+        )
+        conn.commit()
+        return jsonify({"message": "Payment status updated"}), 200
+    except psycopg2.Error:
+        return jsonify({"error": "Database error"}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+
+@app.route('/registrations/details', methods=['GET'])
+@jwt_required()
+def registration_details():
+    student_regno = get_jwt_identity()  # Extract student ID from JWT
+
+    if not student_regno:
+        return jsonify({"error": "Invalid token. User not authenticated."}), 401
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Fetch registrations and event details
+        cur.execute("""
+            SELECT r.registration_id, r.event_id, e.name AS event_name, e.venue, e.date, 
+                   r.email, r.phone_no, r.paid_status
+            FROM registrations r
+            JOIN events e ON r.event_id = e.event_id
+            WHERE r.student_regno = %s
+        """, (student_regno,))
+
+        registrations = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        # ✅ Always return a JSON array (empty if no data)
+        return jsonify({"registrations": registrations}), 200
+
+    except Exception as e:
+        print("Database Error:", str(e))  # Debugging logs
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+
     
 if __name__ == '__main__':
     app.run(debug=True)

@@ -3,6 +3,7 @@
 import type React from "react";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ export default function EventRegistration() {
   });
   const [eventDetails, setEventDetails] = useState<{ event_id: string; name: string; venue: string; date: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false); // ✅ Success state
   const router = useRouter();
   const { eventID } = useParams();
   const eventId = eventID as string;
@@ -44,7 +46,7 @@ export default function EventRegistration() {
     e.preventDefault();
     setLoading(true);
   
-    const token = localStorage.getItem("token"); // Retrieve JWT token
+    const token = localStorage.getItem("token");
   
     if (!token) {
       alert("User is not authenticated. Redirecting to login...");
@@ -57,21 +59,21 @@ export default function EventRegistration() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` // Ensure JWT token is sent
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          event_id: parseInt(eventId, 10),  // 🔥 Convert eventId to integer
+          event_id: parseInt(eventId, 10),
           team_name: formData.teamName,
           email: formData.email,
           phone_no: formData.phoneNo,
         }),
       });
   
-      const data = await response.json();
       if (response.ok) {
-        alert("🎉 Registration successful!");
-        setFormData({ teamName: "", email: "", phoneNo: "" });
+        setSuccess(true); // ✅ Show success animation
+        setTimeout(() => router.push(`/eventt/${eventId}/payment`), 1500); // ⏳ Redirect after 1.5s
       } else {
+        const data = await response.json();
         alert(data.error || "❌ Registration failed.");
       }
     } catch (error) {
@@ -104,44 +106,51 @@ export default function EventRegistration() {
             <CardTitle className="text-2xl text-[#e0e1dd]">Register Now</CardTitle>
           </CardHeader>
           <CardContent className="mt-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="teamName">Team Name</Label>
-                <Input
-                  id="teamName"
-                  value={formData.teamName}
-                  onChange={(e) => setFormData({ ...formData, teamName: e.target.value })}
-                  required
-                />
+            {success ? ( 
+              <div className="flex flex-col items-center justify-center">
+                <CheckCircle2 className="h-16 w-16 text-green-500 animate-bounce" />
+                <p className="text-green-600 font-semibold mt-2 text-lg">Registration Successful!</p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phoneNo">Phone No</Label>
-                <Input
-                  id="phoneNo"
-                  type="tel"
-                  value={formData.phoneNo}
-                  onChange={(e) => setFormData({ ...formData, phoneNo: e.target.value })}
-                  required
-                />
-              </div>
-              <Button
-                type="submit"
-                className="w-full bg-[#415a77] text-white text-lg font-semibold"
-                disabled={loading}
-              >
-                {loading ? "Registering..." : "Register"}
-              </Button>
-            </form>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="teamName">Team Name</Label>
+                  <Input
+                    id="teamName"
+                    value={formData.teamName}
+                    onChange={(e) => setFormData({ ...formData, teamName: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phoneNo">Phone No</Label>
+                  <Input
+                    id="phoneNo"
+                    type="tel"
+                    value={formData.phoneNo}
+                    onChange={(e) => setFormData({ ...formData, phoneNo: e.target.value })}
+                    required
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  className="w-full bg-[#415a77] text-white text-lg font-semibold"
+                  disabled={loading}
+                >
+                  {loading ? "Registering..." : "Register"}
+                </Button>
+              </form>
+            )}
           </CardContent>
         </Card>
       </div>
