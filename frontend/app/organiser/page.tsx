@@ -1,28 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Checkbox } from "@/components/ui/checkbox";
-import { XCircle, QrCode, Lock, Download, LogOut } from "lucide-react";
 import axios from "axios";
+import * as XLSX from "xlsx";
+import { Button } from "@/components/ui/button";
+import { QrCode, Download } from "lucide-react";
 import { jwtDecode } from "jwt-decode";
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [eventData, setEventData] = useState({ name: "Loading Event..." });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [data, setData] = useState<StudentData[]>([]);
+  const [eventId, setEventId] = useState<string>("");
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   interface StudentData {
     student_name: string;
     student_regno: string;
     paid_status: boolean;
     attendance: string;
+  }
+
+  interface DecodedToken {
+    event_id: string;
   }
 
   useEffect(() => {
@@ -32,124 +34,152 @@ export default function AdminDashboard() {
       return;
     }
 
-    axios
-      .get("http://127.0.0.1:5000/admin-profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((response) => {
-        setEventData(response.data);
-        setIsAuthenticated(true);
-      })
-      .catch(() => {
-        localStorage.removeItem("admin_token");
-        router.push("/admin-login");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-
-    const fetchEventData = async () => {
-      try {
-        const token = localStorage.getItem("admin_token");
-        if (!token) {
-          console.error("No token found");
-          return;
-        }
-
-        // Decode JWT to get event_id
-        const decodedToken: any = jwtDecode(token);
-        const event_id = decodedToken.sub;
-        console.log("Event ID:", event_id);
-
-        const response = await fetch("http://localhost:5000/admin-event-registrations", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        const result = await response.json();
-        if (response.ok) {
-          setData(result);
-        } else {
-          console.error("Error fetching data", result);
-        }
-      } catch (error) {
-        console.error("Error fetching data", error);
-      }
-    };
-
-    fetchEventData();
+    try {
+      const decoded: DecodedToken = jwtDecode(token);
+      setEventId(decoded.event_id);
+    } catch (error) {
+      console.error("Invalid token", error);
+      router.push("/admin-login");
+      return;
+    }
   }, [router]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("admin_token");
-    setIsAuthenticated(false);
-    router.push("/admin-login");
+  // Fetch Event Registrations
+  const fetchEventData = useCallback(async () => {
+    const token = localStorage.getItem("admin_token");
+    if (!token) return;
+
+    try {
+      const response = await axios.get(
+        "http://localhost:5000/admin-event-registrations",
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setData(response.data);
+    } catch (error) {
+      console.error("Error fetching data", error);
+    }
+  }, []);
+
+  // Fetch Data Every Second
+  useEffect(() => {
+    fetchEventData(); // Fetch once on mount
+
+    const interval = setInterval(fetchEventData, 1000);
+    return () => clearInterval(interval);
+  }, [fetchEventData]);
+
+  const startQRScanner = () => {
+    if (scanning) return;
+
+    scannerRef.current = new Html5Qrcode("qr-reader");
+
+    scannerRef.current.start(
+      { facingMode: "environment" },
+      { fps: 15, qrbox: 250 },
+      async (decodedText) => {
+        try {
+          const qrData = JSON.parse(decodedText);
+          console.log("QR Code Data:", qrData);
+
+          if (qrData.event_id !== eventId) {
+            alert("Wrong event pass");
+            return;
+          }
+
+          const student = data.find((s) => s.student_regno === qrData.student_regno);
+
+          if (!student) {
+            alert("Student not found");
+            return;
+          }
+
+          await axios.post(
+            "http://localhost:5000/update-attendance",
+            { student_regno: qrData.student_regno },
+            { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token")}` } }
+          );
+
+          alert("Attendance marked successfully!");
+          fetchEventData(); // Fetch updated attendance immediately
+        } catch (error) {
+          console.error("Error processing QR code", error);
+          alert("Invalid QR Code");
+        }
+      },
+      (errorMessage) => {
+        console.warn("QR Scan Error:", errorMessage);
+      }
+    );
+
+    setScanning(true);
   };
 
-  if (loading) return <p>Loading...</p>;
+  const stopQRScanner = () => {
+    if (scannerRef.current) {
+      scannerRef.current.stop().then(() => {
+        scannerRef.current = null;
+        setScanning(false);
+      });
+    }
+  };
+
+  // **Download Table as Excel File**
+  const downloadExcel = () => {
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Event Registrations");
+    
+    // Save the file
+    XLSX.writeFile(workbook, `Event_Registrations.xlsx`);
+  };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc]">
-      <header className="border-b bg-white px-4 py-3 shadow-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <Image src="/vit.png" alt="VIT Chennai Logo" width={40} height={40} className="rounded-full" />
-            <span className="text-lg font-semibold text-[#1b263b]">VIT Chennai Events</span>
-          </Link>
-          {isAuthenticated ? (
-            <Button onClick={handleLogout} variant="outline" className="gap-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-white">
-              <LogOut className="h-4 w-4" />
-              Logout
-            </Button>
-          ) : null}
-        </div>
-      </header>
+    <div className="min-h-screen bg-gray-100 p-4">
+      <h1 className="text-3xl font-bold mb-6">Admin Dashboard</h1>
 
-      <main className="mx-auto max-w-7xl p-4">
-        <div className="grid gap-6 md:grid-cols-[240px_1fr]">
-          <div className="flex flex-col gap-3">
-            <Button className="h-12 w-full justify-start gap-2 bg-[#415a77] text-lg font-semibold text-white hover:bg-[#2d3f54]">EVENT ID</Button>
-            <Button className="h-12 w-full justify-start gap-2 bg-[#415a77] text-lg font-semibold text-white hover:bg-[#2d3f54]">
-              <QrCode className="h-5 w-5" /> SCAN QR
-            </Button>
-            <Button className="h-12 w-full justify-start gap-2 bg-[#415a77] text-lg font-semibold text-white hover:bg-[#2d3f54]">
-              <Lock className="h-5 w-5" /> LOCK TABLE
-            </Button>
-            <Button className="h-12 w-full justify-start gap-2 bg-[#415a77] text-lg font-semibold text-white hover:bg-[#2d3f54]">
-              <Download className="h-5 w-5" /> DOWNLOAD
-            </Button>
-          </div>
+      <Button
+        onClick={startQRScanner}
+        className="mb-4 bg-blue-600 text-white hover:bg-blue-800"
+      >
+        <QrCode className="h-5 w-5 mr-2" /> Scan QR
+      </Button>
 
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h1 className="mb-6 text-center text-3xl font-bold text-[#1b263b]">{eventData.name}</h1>
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-[#f1f5f9] hover:bg-[#f1f5f9]">
-                    <TableHead className="text-[#1b263b]">Sl.No.</TableHead>
-                    <TableHead className="text-[#1b263b]">Student Name</TableHead>
-                    <TableHead className="text-[#1b263b]">Reg. No.</TableHead>
-                    <TableHead className="text-[#1b263b]">Attendance</TableHead>
-                    <TableHead className="text-[#1b263b]">Paid</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.length > 0 ? (
-                    data.map((row, index) => (
-                      <TableRow key={index} className="hover:bg-[#f8fafc]">
-                        <TableCell className="text-[#1b263b]">{index + 1}</TableCell>
-                        <TableCell className="text-[#1b263b]">{row.student_name}</TableCell>
-                        <TableCell className="text-[#1b263b]">{row.student_regno}</TableCell>
-                        <TableCell>{row.attendance}</TableCell>
-                        <TableCell><Checkbox checked={row.paid_status} disabled /></TableCell>
-                      </TableRow>
-                    ))
-                  ) : <TableRow><TableCell colSpan={5} className="text-center">No Data Available</TableCell></TableRow>}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-        </div>
-      </main>
+      <Button
+        onClick={stopQRScanner}
+        className="mb-4 ml-4 bg-red-600 text-white hover:bg-red-800"
+      >
+        Stop Scanner
+      </Button>
+
+      <Button
+        onClick={downloadExcel}
+        className="mb-4 ml-4 bg-green-600 text-white hover:bg-green-800"
+      >
+        <Download className="h-5 w-5 mr-2" /> Download Excel
+      </Button>
+
+      <div id="qr-reader" className="mb-8" />
+
+      <table className="min-w-full bg-white border border-gray-300">
+        <thead>
+          <tr className="bg-gray-200">
+            <th className="py-2 px-4">Sl. No.</th>
+            <th className="py-2 px-4">Student Name</th>
+            <th className="py-2 px-4">Reg. No.</th>
+            <th className="py-2 px-4">Attendance</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, index) => (
+            <tr key={index} className="border-t">
+              <td className="py-2 px-4">{index + 1}</td>
+              <td className="py-2 px-4">{row.student_name}</td>
+              <td className="py-2 px-4">{row.student_regno}</td>
+              <td className="py-2 px-4">{row.attendance}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

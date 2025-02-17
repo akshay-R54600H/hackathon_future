@@ -11,10 +11,8 @@ import qrcode
 import io
 
 app = Flask(__name__)
-CORS(app, 
-     origins=["http://localhost:3000"],  # Your frontend URL
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"])  
+CORS(app, resources={r"/*": {"origins": "*"}})
+ 
 
 # Configure JWT Secret Key
 app.config['JWT_SECRET_KEY'] = 'acdfwrbmnhjfdbgdvmjgbdkdjn'  # Change this to a secure key
@@ -319,7 +317,8 @@ def generate_qr():
         return jsonify({"error": "Registration not found"}), 404
 
     paid_status = registration[0]
-    qr_data = f"event_id:{event_id},student_regno:{student_regno},paid:{paid_status}"
+    qr_data = json.dumps({"event_id": event_id, "student_regno": student_regno, "paid": paid_status})
+
     qr = qrcode.make(qr_data)
     img_io = io.BytesIO()
     qr.save(img_io, format='PNG')
@@ -358,7 +357,43 @@ def admin_event_registrations():
         cur.close()
         conn.close()
 
-    
+@app.route('/update-attendance', methods=['POST'])
+@jwt_required()
+def update_attendance():
+    event_id = get_jwt_identity()  # Get admin's event_id from JWT
+    data = request.get_json()
+    student_regno = data.get("student_regno")
+
+    if not student_regno:
+        return jsonify({"error": "Missing student_regno"}), 400  # Handle missing data
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        # Check if student exists in the database
+        cur.execute("SELECT * FROM registrations WHERE student_regno = %s AND event_id = %s", (student_regno, event_id))
+        student = cur.fetchone()
+
+        if not student:
+            return jsonify({"error": "Student not found in this event"}), 404
+
+        cur.execute(
+            "UPDATE registrations SET attendance = 'Present' WHERE student_regno = %s AND event_id = %s",
+            (student_regno, event_id),
+        )
+        conn.commit()
+
+        return jsonify({"message": "Attendance updated successfully"}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500  # Log exact error
+    finally:
+        cur.close()
+        conn.close()
+
+   
+print(app.url_map)
 
     
 if __name__ == '__main__':
