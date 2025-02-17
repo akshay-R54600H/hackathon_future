@@ -11,7 +11,10 @@ import qrcode
 import io
 
 app = Flask(__name__)
-CORS(app, origins="http://localhost:3000", supports_credentials=True)   
+CORS(app, 
+     origins=["http://localhost:3000"],  # Your frontend URL
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"])  
 
 # Configure JWT Secret Key
 app.config['JWT_SECRET_KEY'] = 'acdfwrbmnhjfdbgdvmjgbdkdjn'  # Change this to a secure key
@@ -284,9 +287,9 @@ def get_event_pass():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
-        SELECT e.event_id, e.name AS event_name, e.venue, e.date, r.paid_status
+        SELECT e.event_id, e.name AS event_name, e.venue, e.date, r.paid_status, s.student_name, s.student_regno
         FROM registrations r
-        JOIN events e ON r.event_id = e.event_id
+        JOIN events e ON r.event_id = e.event_id JOIN students s ON r.student_regno = s.student_regno
         WHERE r.student_regno = %s AND r.event_id = %s
     """, (student_regno, event_id))
     event_pass = cur.fetchone()
@@ -322,6 +325,39 @@ def generate_qr():
     qr.save(img_io, format='PNG')
     img_io.seek(0)
     return send_file(img_io, mimetype='image/png')
+
+@app.route('/admin-event-registrations', methods=['GET'])
+@jwt_required()
+def admin_event_registrations():
+    event_id = get_jwt_identity()  # Get event_id from JWT token
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT s.student_name, s.student_regno, r.paid_status 
+            FROM registrations r
+            JOIN students s ON r.student_regno = s.student_regno
+            WHERE r.event_id = %s
+        """, (event_id,))
+        
+        students = cur.fetchall()
+        if not students:
+            return jsonify({"message": "No registrations found for this event"}), 404
+
+        # Add attendance status (default: Absent)
+        for student in students:
+            student["attendance"] = "Absent"
+
+        return jsonify(students), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
+
     
 
     
