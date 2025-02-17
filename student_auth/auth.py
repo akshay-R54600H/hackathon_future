@@ -242,7 +242,7 @@ def get_events():
         conn.close()
         return jsonify(events)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500 #yss
     
 if __name__ == '__main__':
     app.run(debug=True)
