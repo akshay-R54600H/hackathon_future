@@ -274,40 +274,56 @@ def update_payment_status():
 
 
 
-@app.route('/registrations/details', methods=['GET'])
+# Get Event Pass Details
+@app.route('/get_event_pass', methods=['GET'])
 @jwt_required()
-def registration_details():
-    student_regno = get_jwt_identity()  # Extract student ID from JWT
+def get_event_pass():
+    student_regno = get_jwt_identity()  # Extract student_regno from JWT
+    event_id = request.args.get('event_id')
 
-    if not student_regno:
-        return jsonify({"error": "Invalid token. User not authenticated."}), 401
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT e.event_id, e.name AS event_name, e.venue, e.date, r.paid_status
+        FROM registrations r
+        JOIN events e ON r.event_id = e.event_id
+        WHERE r.student_regno = %s AND r.event_id = %s
+    """, (student_regno, event_id))
+    event_pass = cur.fetchone()
+    cur.close()
+    conn.close()
 
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+    if not event_pass:
+        return jsonify({"error": "Event pass not found"}), 404
 
-        # Fetch registrations and event details
-        cur.execute("""
-            SELECT r.registration_id, r.event_id, e.name AS event_name, e.venue, e.date, 
-                   r.email, r.phone_no, r.paid_status
-            FROM registrations r
-            JOIN events e ON r.event_id = e.event_id
-            WHERE r.student_regno = %s
-        """, (student_regno,))
+    return jsonify(event_pass), 200
 
-        registrations = cur.fetchall()
+# Generate QR Code
+@app.route('/generate_qr', methods=['GET'])
+@jwt_required()
+def generate_qr():
+    student_regno = get_jwt_identity()  # Extract student_regno from JWT
+    event_id = request.args.get('event_id')
 
-        cur.close()
-        conn.close()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT paid_status FROM registrations WHERE student_regno = %s AND event_id = %s", (student_regno, event_id))
+    registration = cur.fetchone()
+    cur.close()
+    conn.close()
 
-        # ✅ Always return a JSON array (empty if no data)
-        return jsonify({"registrations": registrations}), 200
+    if not registration:
+        return jsonify({"error": "Registration not found"}), 404
 
-    except Exception as e:
-        print("Database Error:", str(e))  # Debugging logs
-        return jsonify({"error": "Internal Server Error"}), 500
+    paid_status = registration[0]
+    qr_data = f"event_id:{event_id},student_regno:{student_regno},paid:{paid_status}"
+    qr = qrcode.make(qr_data)
+    img_io = io.BytesIO()
+    qr.save(img_io, format='PNG')
+    img_io.seek(0)
+    return send_file(img_io, mimetype='image/png')
     
 
     
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True) 
